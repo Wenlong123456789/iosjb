@@ -10,7 +10,7 @@ void iosjb_swift_log(const char *message) {
 }
 
 int main(void) {
-    if (iosjb_start(IOSJB_MODE_ORACLE, 5, 6, 8, 100) != 0) {
+    if (iosjb_start(IOSJB_MODE_COMBO, 3, 6, 8, 0) != 0) {
         fputs("iosjb_start failed\n", stderr);
         return 1;
     }

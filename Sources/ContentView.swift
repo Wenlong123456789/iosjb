@@ -82,7 +82,7 @@ private func vulnerabilityWindow() -> Bool {
 struct ContentView: View {
     @ObservedObject private var sink = LogSink.shared
 
-    @State private var mode = 0
+    @State private var mode = 2
     @State private var iterations = 1000.0
     @State private var senders = 6.0
     @State private var sprayCount = 48.0
@@ -160,15 +160,21 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             Picker("模式", selection: $mode) {
                 Text("精确 UAF 检测").tag(0)
+                Text("组合竞态").tag(2)
                 Text("Zone 回收探针").tag(1)
             }
             .pickerStyle(.segmented)
 
-            if mode == 0 {
+            if mode != 1 {
                 stepperRow("迭代次数", value: $iterations, range: 1...5000, step: 50)
                 stepperRow("发送线程", value: $senders, range: 1...16, step: 1)
                 stepperRow("喷射 Socket", value: $sprayCount, range: 1...128, step: 8)
                 stepperRow("关闭延迟", value: $closeDelay, range: 0...2000, step: 10, suffix: " 微秒")
+                if mode == 2 {
+                    Text("组合模式依次运行：精确 close/send、8 Socket 多 FD 退役、TCP Timer Socket 退役。建议先用 1000 轮测试。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             } else {
                 Text("分配并释放 Socket 对象，喷射 832 字节 OOL Mach 消息，然后检查新 Socket 字段是否出现标记值。此模式不会触发竞态。")
                     .font(.caption)

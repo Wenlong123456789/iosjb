@@ -5,7 +5,8 @@
 
 enum {
     IOSJB_MODE_ORACLE = 0,
-    IOSJB_MODE_RECLAIM = 1
+    IOSJB_MODE_RECLAIM = 1,
+    IOSJB_MODE_COMBO = 2
 };
 
 int32_t iosjb_start(int32_t mode,
