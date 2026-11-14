@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleDevelopmentRegion</key>
-    <string>en</string>
+    <string>zh_CN</string>
     <key>CFBundleDisplayName</key>
-    <string>IOSJB</string>
+    <string>IOSJB 研究终端</string>
     <key>CFBundleExecutable</key>
     <string>IOSJB</string>
     <key>CFBundleIdentifier</key>
@@ -13,25 +13,27 @@
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>IOSJB</string>
+    <string>IOSJB 研究终端</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>0.1.1</string>
     <key>CFBundleSupportedPlatforms</key>
     <array>
         <string>iPhoneOS</string>
     </array>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>2</string>
     <key>ITSAppUsesNonExemptEncryption</key>
     <false/>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>LSSupportsOpeningDocumentsInPlace</key>
+    <true/>
     <key>MinimumOSVersion</key>
     <string>16.0</string>
     <key>NSHumanReadableCopyright</key>
-    <string>MIT License. Authorized security research only.</string>
+    <string>MIT License。仅限已授权设备的安全研究。</string>
     <key>UIApplicationSceneManifest</key>
     <dict>
         <key>UIApplicationSupportsMultipleScenes</key>
@@ -39,6 +41,8 @@
     </dict>
     <key>UILaunchScreen</key>
     <dict/>
+    <key>UIFileSharingEnabled</key>
+    <true/>
     <key>UIRequiredDeviceCapabilities</key>
     <array>
         <string>arm64</string>

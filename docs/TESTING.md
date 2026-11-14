@@ -1,39 +1,54 @@
-# Device testing
+# 设备测试说明
 
-## Preconditions
+## 前置条件
 
-- iPhone 14 Pro Max or another arm64e device you own.
-- iOS 27.0 or 27.0.1.
-- Developer Mode enabled for sideloading.
-- A current backup.
+- 一台你拥有并获授权测试的 iPhone 14 Pro Max 或其他 arm64e 设备。
+- iOS 27.0 或 27.0.1。
+- 已为侧载安装启用开发者模式。
+- 已备份设备，并接受测试可能导致重启或内核 Panic 的风险。
 
-## Install
+## 安装
 
-The CI artifact is unsigned. Sign it with your normal sideloading tool or
-build from Xcode with your own team.
+CI 产物是 unsigned IPA。请使用你自己的开发者证书或常用侧载工具重签，或者在
+Xcode 中选择自己的 Team 后编译。
 
-## First run
+## 第一次测试
 
-1. Open IOSJB in the foreground.
-2. Confirm the status card says `CVE window: open`.
-3. Run **Zone reclaim probe** once to confirm the app and allocator paths work.
-4. Switch to **Precision UAF oracle**.
-5. Use the defaults first.
-6. Stop after a confirmed hit and record the log.
+1. 在前台打开 IOSJB。
+2. 确认状态卡片显示 `CVE 窗口：开放`。
+3. 先运行一次 **Zone 回收探针**，确认 App 和分配器路径正常。
+4. 切换到 **精确 UAF 检测**。
+5. 先使用默认参数。
+6. 出现命中后停止，并保存日志。
 
-## Interpreting results
+## 结果解读
 
-`STALE WRITE CONFIRMED` means the peer-delivery oracle observed data from a
-sender whose socket was closed while the send was in flight.
+`STALE WRITE CONFIRMED / 已确认陈旧写入` 表示 Peer-Delivery 检测发现：发送
+Socket 在 `sendmsg` 期间被关闭后，数据仍然到达了后来重新分配、从未主动发送过的
+Socket。
 
-It does not mean:
+它不代表：
 
-- arbitrary kernel read;
-- arbitrary kernel write;
-- root;
-- code signing bypass;
-- tweak injection;
-- jailbreak.
+- 任意内核读取；
+- 任意内核写入；
+- Root 权限；
+- 代码签名绕过；
+- Tweak 注入；
+- 完整越狱。
 
-If the device panics, capture the panic log before rebooting again.
+## 发送结果
+
+优先使用以下任一方式：
+
+1. 在运行日志卡片中点击 **分享**，发送 `IOSJB.log`。
+2. 点击 **复制**，把日志粘贴到 GitHub Issue 或聊天中。
+3. 打开文件 App，进入 `我的 iPhone > IOSJB > IOSJB.log`。
+
+如果设备发生 Panic，请同时提供对应的 Panic 报告：
+
+```text
+设置 > 隐私与安全性 > 分析与改进 > 分析数据
+```
+
+搜索 `panic` 或测试时间附近的报告。
 

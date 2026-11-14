@@ -1,65 +1,63 @@
-# IOSJB
+# IOSJB 研究终端
 
-IOSJB is an on-device research harness for **CVE-2026-112514**, a socket-buffer
-use-after-free in XNU that Apple fixed in iOS 27.2.
+IOSJB 是一个运行在 iPhone 上的 **CVE-2026-112514** 研究工具。该漏洞是 XNU
+Socket 缓冲区中的 Use-After-Free，Apple 已在 iOS 27.2 中修复。
 
-> This is not a complete jailbreak. The current project can exercise the race
-> and detect a stale write into a reallocated socket. It does not yet convert
-> the bug into controlled kernel read/write, bypass SPTM/TXM/PAC, or install a
-> bootstrap.
+当前版本：**v0.1.1**
 
-## What is implemented
+> 这不是完整越狱。目前只能触发竞态，并检测数据是否被写入已经释放后重新分配的
+> Socket。尚未实现受控内核读写、SPTM/TXM/PAC 绕过或 Bootstrap。
 
-- A SwiftUI app that runs on iOS 16 and later.
-- A low-CPU precision race using persistent sender threads and a condition
-  variable gate.
-- A peer-delivery oracle: spray sockets are freshly connected and never send.
-  Bytes arriving at their peers therefore come from a stale sender.
-- An explicit, separate zone-reclaim probe for studying 832-byte socket
-  replacement with out-of-line Mach messages.
-- A stop control and periodic rate limiting to reduce watchdog pressure.
-- GitHub Actions compilation into an unsigned IPA artifact.
+## 已实现功能
 
-## Target
+- 支持 iOS 16 及以上版本的 SwiftUI App。
+- 使用常驻发送线程和条件变量门闸的低 CPU 精确竞态。
+- Peer-Delivery 检测：喷射 Socket 从不主动发送，因此其 peer 收到的数据只能来自
+  已经关闭的发送者。
+- 独立的 832 字节 OOL Mach 消息 Zone 回收探针。
+- 可随时停止，并带有限速，减少 Watchdog 压力。
+- 运行日志自动写入 `Documents/IOSJB.log`，支持复制和文件分享。
+- GitHub Actions 自动编译 unsigned IPA。
 
-| Item | Value |
+## 目标设备
+
+| 项目 | 内容 |
 |---|---|
-| Primary target | iPhone 14 Pro Max (`iPhone15,3`, A16) |
-| Vulnerable iOS | 27.0 and 27.0.1 |
-| Patched iOS | 27.2 and later |
-| Entitlements | None beyond normal sideloading |
-| Kernel access | Not implemented |
+| 主要目标 | iPhone 14 Pro Max（`iPhone15,3`，A16） |
+| 受影响系统 | iOS 27.0、27.0.1 |
+| 已修复系统 | iOS 27.2 及更高版本 |
+| 特殊权限 | 除正常侧载签名外无额外权限 |
+| 内核读写 | 尚未实现 |
 
-The public hardware evidence for this race comes from another arm64e device.
-The A16 path must be measured independently. Use only a device you own.
+公开的硬件证据来自另一台 arm64e 设备。A16 上的命中率必须单独测量。请只在
+你拥有并获授权测试的设备上运行。
 
-## Build
+## 编译
 
-GitHub Actions builds the app on every push to `main` and through manual
-dispatch:
+推送到 `main` 或手动触发 GitHub Actions 后会生成 unsigned IPA：
 
 ```text
 Actions -> Build unsigned IPA -> Artifacts -> IOSJB-unsigned
 ```
 
-Local build on a Mac with full Xcode:
+在安装了完整 Xcode 的 Mac 上本地编译：
 
 ```sh
 chmod +x scripts/build_ipa.sh
 ./scripts/build_ipa.sh
 ```
 
-Outputs:
+输出文件：
 
 ```text
 dist/IOSJB-unsigned.ipa
 dist/IOSJB-unsigned.ipa.sha256
 ```
 
-The CI IPA is intentionally unsigned. Sign it with your normal sideloading
-tool, or open the source in Xcode with your own team.
+CI 产物默认不签名。请使用你自己的开发者证书或常用侧载工具重签，也可以在 Xcode
+中选择自己的 Team 后编译。
 
-The C race harness also has a host smoke test:
+Host 侧 Smoke Test：
 
 ```sh
 mkdir -p build
@@ -68,50 +66,51 @@ xcrun --sdk macosx clang -O2 -Wall -Wextra -Werror \
 ./build/host-smoke
 ```
 
-## Usage
+## 测试步骤
 
-1. Install the signed app on the target iPhone.
-2. Confirm the device is on iOS 27.0 or 27.0.1.
-3. Keep the app in the foreground.
-4. Start with **Precision UAF oracle** and the default parameters.
-5. Watch for:
+1. 在目标 iPhone 上安装已签名的 App。
+2. 确认系统为 iOS 27.0 或 27.0.1。
+3. 保持 App 在前台。
+4. 先运行一次 **Zone 回收探针**，确认 App 和分配器路径正常。
+5. 切换到 **精确 UAF 检测**，先使用默认参数。
+6. 出现命中后建议停止，并保存日志。
+
+> 竞态可能破坏正在使用的内核对象并导致设备重启。运行前请保存工作。
+
+日志会自动写入：
 
 ```text
-STALE WRITE CONFIRMED
+文件 App > 我的 iPhone > IOSJB > IOSJB.log
 ```
 
-The app may cause a kernel panic or reboot if the race corrupts active kernel
-state. Save work before running it.
+也可以直接点击日志卡片中的 **分享** 或 **复制**。
 
-## Modes
+## 模式说明
 
-### Precision UAF oracle
+### 精确 UAF 检测
 
-Runs the close-versus-send race and checks whether bytes from a stale sender
-arrive at a socket that never sent. A hit proves a stale kernel write, not
-controlled kernel read/write.
+执行 close 与 send 的竞态，并检查陈旧发送者的数据是否到达一个从未发送过的
+Socket。命中只能证明发生了 stale kernel write，不代表已经获得受控内核读写。
 
-### Zone reclaim probe
+### Zone 回收探针
 
-Allocates and frees socket objects, sprays 832-byte out-of-line Mach messages,
-then inspects fresh sockets for the spray marker. This is an exploratory
-allocator test and does not itself trigger the race.
+分配并释放 Socket 对象，喷射 832 字节 OOL Mach 消息，然后检查新建 Socket 的字段
+是否出现标记值。这是一个探索性分配器测试，本身不会触发 UAF 竞态。
 
-## Current limitations
+## 当前限制
 
-- No public proof that the same race reaches a controlled primitive on A16.
-- No KASLR or heap-address leak.
-- No stable replacement of a freed `struct socket` with attacker-shaped data.
-- No SPTM/TXM/PAC bypass.
-- No rootless bootstrap, launchd hook, or tweak injection.
+- 尚无公开证据证明同一竞态在 A16 上能够达到受控原语。
+- 没有 KASLR 或内核堆地址泄漏。
+- 没有稳定的攻击者数据替换 `struct socket` 方案。
+- 没有 SPTM/TXM/PAC 绕过。
+- 没有 Rootless Bootstrap、Launchd Hook 或 Tweak 注入。
 
-## Research notes
+## 研究文档
 
-See [docs/CVE-2026-112514.md](docs/CVE-2026-112514.md) for the vulnerability
-model, evidence boundary, and next experiments. Sources are listed in
-[docs/SOURCES.md](docs/SOURCES.md).
+- [CVE-2026-112514 研究记录](docs/CVE-2026-112514.md)
+- [设备测试说明](docs/TESTING.md)
+- [来源与边界](docs/SOURCES.md)
 
-## License
+## 许可证
 
-MIT. See [LICENSE](LICENSE).
-
+MIT，详见 [LICENSE](LICENSE)。

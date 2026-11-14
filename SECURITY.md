@@ -1,15 +1,14 @@
-# Security and safe testing
+# 安全测试说明
 
-IOSJB is a security research harness for a memory-safety bug.
+IOSJB 是用于研究内存安全漏洞的实验工具。
 
-- Test only on hardware you own and are willing to restart.
-- Running the race may panic the kernel or reboot the device.
-- Do not run it on a primary phone without a current backup.
-- The app does not provide root, kernel read/write, or jailbreak persistence.
-- iOS 27.2 and later are patched. The app warns and refuses to start there.
-- Do not redistribute a signed build under somebody else's signing identity.
+- 只在你自己拥有并获授权测试的设备上运行。
+- 竞态可能导致内核 Panic、设备重启或文件系统异常。
+- 不建议在主力设备上运行，至少先完成备份。
+- App 不会提供 Root、内核读写或越狱持久化。
+- iOS 27.2 及更高版本已修复，App 会提示并禁止启动。
+- `Documents/IOSJB.log` 开启文件分享是为了导出测试结果，其中不会写入凭据。
+- 不要把使用他人签名身份的版本重新分发。
 
-If this project is used in external research, preserve the evidence boundary:
-a peer-delivery hit is a stale write into a reallocated socket, not proof of a
-controlled arbitrary read or write primitive.
-
+用于外部研究时请保持证据边界：Peer-Delivery 命中只能证明发生 stale write，
+不能证明已经获得受控任意内核读写。

