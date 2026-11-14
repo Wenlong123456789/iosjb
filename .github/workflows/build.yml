@@ -1,0 +1,60 @@
+name: Build unsigned IPA
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate repository inputs
+        run: |
+          python3 Tests/test_build_inputs.py
+          plutil -lint Resources/Info.plist
+
+      - name: Host smoke test
+        run: |
+          mkdir -p build
+          xcrun --sdk macosx clang -O2 -Wall -Wextra -Werror \
+            Tests/host_smoke.c Sources/SocketUAF.c -o build/host-smoke
+          ./build/host-smoke
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Build
+        run: |
+          chmod +x scripts/build_ipa.sh
+          ./scripts/build_ipa.sh
+
+      - name: Inspect artifact
+        run: |
+          unzip -l dist/IOSJB-unsigned.ipa
+          shasum -a 256 dist/IOSJB-unsigned.ipa
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: IOSJB-unsigned
+          path: |
+            dist/IOSJB-unsigned.ipa
+            dist/IOSJB-unsigned.ipa.sha256
+          if-no-files-found: error
+          retention-days: 30
