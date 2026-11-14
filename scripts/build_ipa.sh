@@ -14,12 +14,16 @@ if ! xcrun --sdk iphoneos --show-sdk-path >/dev/null 2>&1; then
 fi
 
 SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
+XCODE_VERSION="$(xcodebuild -version | awk '/^Xcode / {print $2; exit}')"
+XCODE_BUILD="$(xcodebuild -version | awk '/^Build version / {print $3; exit}')"
+BUCKET_BUILD="$(sw_vers -buildVersion)"
 rm -rf "$BUILD" "$DIST"
 mkdir -p "$APP" "$DIST"
 
 echo "== toolchain =="
 xcodebuild -version
-xcrun --sdk iphoneos --show-sdk-version
+echo "$SDK_VERSION"
 
 echo "== compile C bridge =="
 xcrun --sdk iphoneos clang \
@@ -51,6 +55,15 @@ xcrun --sdk iphoneos swiftc \
 
 cp "$ROOT/Resources/Info.plist" "$APP/Info.plist"
 printf 'APPL????' > "$APP/PkgInfo"
+
+PLIST_BUDDY=/usr/libexec/PlistBuddy
+"$PLIST_BUDDY" -c "Add :DTPlatformName string iphoneos" "$APP/Info.plist"
+"$PLIST_BUDDY" -c "Add :DTPlatformVersion string $SDK_VERSION" "$APP/Info.plist"
+"$PLIST_BUDDY" -c "Add :DTSDKName string iphoneos$SDK_VERSION" "$APP/Info.plist"
+"$PLIST_BUDDY" -c "Add :DTXcode string $XCODE_VERSION" "$APP/Info.plist"
+"$PLIST_BUDDY" -c "Add :DTXcodeBuild string $XCODE_BUILD" "$APP/Info.plist"
+"$PLIST_BUDDY" -c "Add :BuildMachineOSBuild string $BUCKET_BUILD" "$APP/Info.plist"
+
 /usr/bin/plutil -lint "$APP/Info.plist"
 file "$APP/IOSJB"
 otool -L "$APP/IOSJB"

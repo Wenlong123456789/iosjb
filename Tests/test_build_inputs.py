@@ -19,6 +19,7 @@ def main() -> None:
     require(plist["CFBundleExecutable"] == "IOSJB", "bad executable name")
     require(plist["CFBundleIdentifier"] == "com.wenlong.iosjb", "bad bundle id")
     require(plist["MinimumOSVersion"] == "16.0", "bad minimum iOS version")
+    require(plist["CFBundleSupportedPlatforms"] == ["iPhoneOS"], "bad platform")
 
     header = (ROOT / "Sources" / "IOSJB-Bridging-Header.h").read_text()
     source = (ROOT / "Sources" / "SocketUAF.c").read_text()
@@ -28,6 +29,7 @@ def main() -> None:
     require("run_oracle" in source, "oracle missing")
     require("STALE WRITE CONFIRMED" in source, "oracle result marker missing")
     require("macos-latest" in workflow, "macOS runner missing")
+    require((ROOT / "docs" / "SOURCES.md").is_file(), "sources missing")
     print("build inputs: PASS")
 
 

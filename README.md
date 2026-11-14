@@ -108,7 +108,8 @@ allocator test and does not itself trigger the race.
 ## Research notes
 
 See [docs/CVE-2026-112514.md](docs/CVE-2026-112514.md) for the vulnerability
-model, evidence boundary, and next experiments.
+model, evidence boundary, and next experiments. Sources are listed in
+[docs/SOURCES.md](docs/SOURCES.md).
 
 ## License
 
